@@ -4,9 +4,14 @@ $ErrorActionPreference = 'Stop'
 $script:ClaudeInstallBeginMarker = '# >>> Claude Install Bootstrap >>>'
 $script:ClaudeInstallEndMarker = '# <<< Claude Install Bootstrap <<<'
 $script:MinimumPowerShellVersion = [System.Management.Automation.SemanticVersion]'7.6.0-rc.1'
-$script:PowerShellInstallCommand = 'winget install --id Microsoft.PowerShell.Preview --source winget'
+$script:RecommendedPowerShellVersion = '7.6.0'
+$script:PowerShellInstallCommand = @'
+$msi = "$env:TEMP\PowerShell-7.6.0-win-x64.msi"
+Invoke-WebRequest https://github.com/PowerShell/PowerShell/releases/download/v7.6.0/PowerShell-7.6.0-win-x64.msi -OutFile $msi
+Start-Process msiexec.exe -Wait -ArgumentList "/i `"$msi`" /passive"
+'@.Trim()
 $script:ClaudeCliInstallCommand = 'irm https://claude.ai/install.ps1 | iex'
-$script:DefaultManagedBlockUrl = 'https://raw.githubusercontent.com/lzlxxx/claude-install-bootstrap/main/claude-install.txt'
+$script:DefaultManagedBlockUrl = 'https://raw.githubusercontent.com/<github-user>/claude-install-bootstrap/main/claude-install.txt'
 
 function Test-ClaudeInstallPrerequisites {
     param(
@@ -16,11 +21,11 @@ function Test-ClaudeInstallPrerequisites {
     )
 
     if ($CurrentPowerShellVersion -lt $script:MinimumPowerShellVersion) {
-        throw "需要 PowerShell 7.6.0-rc.1 或更高版本。当前版本：$CurrentPowerShellVersion。请先执行：$($script:PowerShellInstallCommand)"
+        throw "需要 PowerShell 7.6.0-rc.1 或更高版本。当前版本：$CurrentPowerShellVersion。请先执行以下命令安装 PowerShell $($script:RecommendedPowerShellVersion) 或更高版本：`n$($script:PowerShellInstallCommand)"
     }
 
     if ($null -eq $ClaudeCommand) {
-        throw "未检测到 claude CLI。请先安装后重试：$($script:ClaudeCliInstallCommand)"
+        throw "未检测到 claude CLI。请先执行以下命令安装后重试：`n$($script:ClaudeCliInstallCommand)"
     }
 
     return [pscustomobject]@{
@@ -69,8 +74,8 @@ function New-ClaudeInstallManagedSection {
 
     $newline = [Environment]::NewLine
     return $script:ClaudeInstallBeginMarker + $newline +
-    $ManagedBlockContent.Trim() + $newline +
-    $script:ClaudeInstallEndMarker + $newline
+        $ManagedBlockContent.Trim() + $newline +
+        $script:ClaudeInstallEndMarker + $newline
 }
 
 function Update-ClaudeInstallProfileBlock {
@@ -95,10 +100,10 @@ function Update-ClaudeInstallProfileBlock {
 
     $managedSection = New-ClaudeInstallManagedSection -ManagedBlockContent $ManagedBlockContent
     $pattern = '(?s)' +
-    [regex]::Escape($script:ClaudeInstallBeginMarker) +
-    '.*?' +
-    [regex]::Escape($script:ClaudeInstallEndMarker) +
-    '(\r?\n)?'
+        [regex]::Escape($script:ClaudeInstallBeginMarker) +
+        '.*?' +
+        [regex]::Escape($script:ClaudeInstallEndMarker) +
+        '(\r?\n)?'
 
     if ($existingContent -match $pattern) {
         $updatedContent = [regex]::Replace($existingContent, $pattern, $managedSection, 1)
