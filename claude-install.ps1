@@ -5,6 +5,7 @@ $script:ClaudeInstallBeginMarker = '# >>> Claude Install Bootstrap >>>'
 $script:ClaudeInstallEndMarker = '# <<< Claude Install Bootstrap <<<'
 $script:MinimumPowerShellVersion = '7.6.0-rc.1'
 $script:RecommendedPowerShellVersion = '7.6.0'
+$script:BootstrapInstallCommand = 'irm https://raw.githubusercontent.com/lzlxxx/claude-install-bootstrap/main/claude-install.ps1 | iex'
 $script:PowerShellInstallCommand = @'
 $msi = "$env:TEMP\PowerShell-7.6.0-win-x64.msi"
 Invoke-WebRequest https://github.com/PowerShell/PowerShell/releases/download/v7.6.0/PowerShell-7.6.0-win-x64.msi -OutFile $msi
@@ -12,6 +13,45 @@ Start-Process msiexec.exe -Wait -ArgumentList "/i `"$msi`" /passive"
 '@.Trim()
 $script:ClaudeCliInstallCommand = 'irm https://claude.ai/install.ps1 | iex'
 $script:DefaultManagedBlockUrl = 'https://raw.githubusercontent.com/<github-user>/claude-install-bootstrap/main/claude-install.txt'
+
+function New-ClaudeInstallUpgradeMessage {
+    param([AllowNull()][object]$CurrentPowerShellVersion)
+
+    $shellName = if ($PSVersionTable.PSEdition -eq 'Desktop') { 'Windows PowerShell' } else { 'PowerShell' }
+    $stepTwo = if ($shellName -eq 'Windows PowerShell') {
+        "步骤 2：安装完成后打开 pwsh`n不要继续在当前 powershell.exe / Windows PowerShell 窗口中执行下面的命令。"
+    }
+    else {
+        '步骤 2：安装完成后重新打开 pwsh'
+    }
+
+    return @(
+        "当前是在 $shellName 中运行，版本：$CurrentPowerShellVersion。"
+        '此环境不能直接继续执行安装流程，请按以下步骤操作：'
+        ''
+        "步骤 1：安装 PowerShell $($script:RecommendedPowerShellVersion) 或更高版本"
+        '以下命令只用于安装 PowerShell，不要和后续命令一起复制：'
+        $script:PowerShellInstallCommand
+        ''
+        $stepTwo
+        ''
+        '步骤 3：在 pwsh 中重新执行安装命令'
+        $script:BootstrapInstallCommand
+    ) -join [Environment]::NewLine
+}
+
+function New-ClaudeInstallMissingCliMessage {
+    return @(
+        '未检测到 claude CLI。'
+        '请在 pwsh 中按以下步骤执行：'
+        ''
+        '步骤 1：安装 Claude CLI'
+        $script:ClaudeCliInstallCommand
+        ''
+        '步骤 2：安装完成后，在 pwsh 中重新执行安装命令'
+        $script:BootstrapInstallCommand
+    ) -join [Environment]::NewLine
+}
 
 function Test-ClaudeInstallPrerequisites {
     param(
@@ -22,11 +62,11 @@ function Test-ClaudeInstallPrerequisites {
     )
 
     if ((Compare-ClaudeInstallVersion -LeftVersion $CurrentPowerShellVersion -RightVersion $script:MinimumPowerShellVersion) -lt 0) {
-        throw "需要 PowerShell 7.6.0-rc.1 或更高版本。当前版本：$CurrentPowerShellVersion。请先执行以下命令安装 PowerShell $($script:RecommendedPowerShellVersion) 或更高版本：`n$($script:PowerShellInstallCommand)"
+        throw (New-ClaudeInstallUpgradeMessage -CurrentPowerShellVersion $CurrentPowerShellVersion)
     }
 
     if ($null -eq $ClaudeCommand) {
-        throw "未检测到 claude CLI。请先执行以下命令安装后重试：`n$($script:ClaudeCliInstallCommand)"
+        throw (New-ClaudeInstallMissingCliMessage)
     }
 
     return [pscustomobject]@{
