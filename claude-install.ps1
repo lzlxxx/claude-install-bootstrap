@@ -3,7 +3,7 @@ $ErrorActionPreference = 'Stop'
 
 $script:ClaudeInstallBeginMarker = '# >>> Claude Install Bootstrap >>>'
 $script:ClaudeInstallEndMarker = '# <<< Claude Install Bootstrap <<<'
-$script:MinimumPowerShellVersion = [System.Management.Automation.SemanticVersion]'7.6.0-rc.1'
+$script:MinimumPowerShellVersion = '7.6.0-rc.1'
 $script:RecommendedPowerShellVersion = '7.6.0'
 $script:PowerShellInstallCommand = @'
 $msi = "$env:TEMP\PowerShell-7.6.0-win-x64.msi"
@@ -15,12 +15,13 @@ $script:DefaultManagedBlockUrl = 'https://raw.githubusercontent.com/<github-user
 
 function Test-ClaudeInstallPrerequisites {
     param(
-        [System.Management.Automation.SemanticVersion]$CurrentPowerShellVersion = $PSVersionTable.PSVersion,
+        [AllowNull()]
+        [object]$CurrentPowerShellVersion = $PSVersionTable.PSVersion,
         [AllowNull()]
         [object]$ClaudeCommand = (Get-Command claude -ErrorAction SilentlyContinue)
     )
 
-    if ($CurrentPowerShellVersion -lt $script:MinimumPowerShellVersion) {
+    if ((Compare-ClaudeInstallVersion -LeftVersion $CurrentPowerShellVersion -RightVersion $script:MinimumPowerShellVersion) -lt 0) {
         throw "需要 PowerShell 7.6.0-rc.1 或更高版本。当前版本：$CurrentPowerShellVersion。请先执行以下命令安装 PowerShell $($script:RecommendedPowerShellVersion) 或更高版本：`n$($script:PowerShellInstallCommand)"
     }
 
@@ -29,9 +30,91 @@ function Test-ClaudeInstallPrerequisites {
     }
 
     return [pscustomobject]@{
-        PowerShellVersion = $CurrentPowerShellVersion
+        PowerShellVersion = [string]$CurrentPowerShellVersion
         ClaudeCommandPath = $ClaudeCommand.Source
     }
+}
+
+function ConvertTo-ClaudeInstallVersionInfo {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [object]$Version
+    )
+
+    $versionText = if ($null -eq $Version) { '' } else { [string]$Version }
+    if ([string]::IsNullOrWhiteSpace($versionText)) {
+        throw '版本号不能为空。'
+    }
+
+    $match = [regex]::Match(
+        $versionText.Trim(),
+        '^(?<numbers>\d+(?:\.\d+)*)(?:-(?<pre>[0-9A-Za-z.-]+))?$'
+    )
+    if (-not $match.Success) {
+        throw "无法解析版本号：$versionText"
+    }
+
+    return [pscustomobject]@{
+        Numbers    = @($match.Groups['numbers'].Value.Split('.') | ForEach-Object { [long]$_ })
+        PreRelease = $match.Groups['pre'].Value
+    }
+}
+
+function Compare-ClaudeInstallPreRelease {
+    param(
+        [string]$LeftPreRelease,
+        [string]$RightPreRelease
+    )
+
+    if ([string]::IsNullOrWhiteSpace($LeftPreRelease) -and [string]::IsNullOrWhiteSpace($RightPreRelease)) { return 0 }
+    if ([string]::IsNullOrWhiteSpace($LeftPreRelease)) { return 1 }
+    if ([string]::IsNullOrWhiteSpace($RightPreRelease)) { return -1 }
+
+    $leftParts = $LeftPreRelease.Split('.')
+    $rightParts = $RightPreRelease.Split('.')
+    for ($index = 0; $index -lt [Math]::Max($leftParts.Count, $rightParts.Count); $index++) {
+        if ($index -ge $leftParts.Count) { return -1 }
+        if ($index -ge $rightParts.Count) { return 1 }
+        $leftPart = $leftParts[$index]
+        $rightPart = $rightParts[$index]
+        $leftIsNumber = $leftPart -match '^\d+$'
+        $rightIsNumber = $rightPart -match '^\d+$'
+        if ($leftIsNumber -and $rightIsNumber) {
+            if ([long]$leftPart -lt [long]$rightPart) { return -1 }
+            if ([long]$leftPart -gt [long]$rightPart) { return 1 }
+            continue
+        }
+        if ($leftIsNumber) { return -1 }
+        if ($rightIsNumber) { return 1 }
+        $comparison = [string]::CompareOrdinal($leftPart, $rightPart)
+        if ($comparison -lt 0) { return -1 }
+        if ($comparison -gt 0) { return 1 }
+    }
+
+    return 0
+}
+
+function Compare-ClaudeInstallVersion {
+    param(
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [object]$LeftVersion,
+        [Parameter(Mandatory = $true)]
+        [AllowNull()]
+        [object]$RightVersion
+    )
+
+    $leftInfo = ConvertTo-ClaudeInstallVersionInfo -Version $LeftVersion
+    $rightInfo = ConvertTo-ClaudeInstallVersionInfo -Version $RightVersion
+    for ($index = 0; $index -lt [Math]::Max($leftInfo.Numbers.Count, $rightInfo.Numbers.Count); $index++) {
+        $leftNumber = if ($index -lt $leftInfo.Numbers.Count) { $leftInfo.Numbers[$index] } else { 0 }
+        $rightNumber = if ($index -lt $rightInfo.Numbers.Count) { $rightInfo.Numbers[$index] } else { 0 }
+        if ($leftNumber -lt $rightNumber) { return -1 }
+        if ($leftNumber -gt $rightNumber) { return 1 }
+    }
+
+    return Compare-ClaudeInstallPreRelease -LeftPreRelease $leftInfo.PreRelease -RightPreRelease $rightInfo.PreRelease
 }
 
 function Get-ClaudeInstallManagedBlockContent {
@@ -169,7 +252,8 @@ function Invoke-ClaudeInstallBootstrap {
         [string]$ManagedBlockContent,
         [string]$ManagedBlockPath,
         [string]$ManagedBlockUrl = $script:DefaultManagedBlockUrl,
-        [System.Management.Automation.SemanticVersion]$CurrentPowerShellVersion = $PSVersionTable.PSVersion,
+        [AllowNull()]
+        [object]$CurrentPowerShellVersion = $PSVersionTable.PSVersion,
         [AllowNull()]
         [object]$ClaudeCommand = (Get-Command claude -ErrorAction SilentlyContinue)
     )
